@@ -1,0 +1,771 @@
+#!/usr/bin/env python3
+"""
+agy-mcp-telegram - Zero-dependency-at-startup Python 3 stdio MCP server for
+personal Telegram (MTProto via Telethon).
+
+Imports `telethon` lazily so the MCP server ALWAYS starts cleanly even before
+the user installs `telethon` or runs `agy-tg-setup`, returning clear 1-step
+setup instructions instead of crashing.
+
+Credentials & session are stored strictly under:
+  $HOME/.gemini/antigravity-app/telegram/config.json  (mode 0600)
+  $HOME/.gemini/antigravity-app/telegram/user.session (mode 0600)
+
+Protocol: JSON-RPC 2.0 over newline-delimited stdin/stdout (MCP 2024-11-05+).
+"""
+
+import os
+import sys
+import json
+import asyncio
+import importlib
+
+SERVER_NAME = "telegram"
+SERVER_VERSION = "1.0.0"
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+DEFAULT_PROTOCOL_VERSION = "2024-11-05"
+
+_LOOP = None
+_CLIENT = None
+
+
+def get_prefix():
+    env_prefix = os.environ.get("PREFIX", "").strip()
+    if env_prefix:
+        return env_prefix
+    return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+def get_home():
+    env_home = os.environ.get("HOME", "").strip()
+    if env_home:
+        return env_home
+    return os.path.dirname(get_prefix())
+
+
+def get_telegram_dir():
+    override = os.environ.get("AGY_TELEGRAM_DIR", "").strip()
+    if override:
+        return override
+    return os.path.join(get_home(), ".gemini", "antigravity-app", "telegram")
+
+
+def get_config_path():
+    return os.path.join(get_telegram_dir(), "config.json")
+
+
+def get_session_base_path():
+    return os.path.join(get_telegram_dir(), "user")
+
+
+def get_session_file_path():
+    return get_session_base_path() + ".session"
+
+
+def _load_telethon():
+    try:
+        mod = importlib.import_module("telethon")
+        return mod, None
+    except Exception as e:
+        return None, str(e)
+
+
+def _load_config():
+    path = get_config_path()
+    if not os.path.isfile(path):
+        return None, f"Telegram config not found at {path}"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        api_id = int(data.get("api_id", 0))
+        api_hash = str(data.get("api_hash") or "").strip()
+        if api_id <= 0 or not api_hash:
+            return None, "Invalid api_id or api_hash in Telegram config.json"
+        return {"api_id": api_id, "api_hash": api_hash}, None
+    except Exception as e:
+        return None, f"Failed reading Telegram config.json: {e}"
+
+
+def _setup_instructions(reason):
+    return {
+        "ok": False,
+        "configured": False,
+        "error": reason,
+        "setup_command": "agy-tg-setup",
+        "instructions": (
+            "Run `agy-tg-setup` in the Antigravity terminal. It will install Telethon if missing, "
+            "prompt for your API_ID and API_HASH from https://my.telegram.org/apps, and sign in "
+            "to your Telegram account (saving credentials with 0600 permissions under "
+            f"{get_telegram_dir()})."
+        ),
+    }
+
+
+def _get_event_loop():
+    global _LOOP
+    if _LOOP is None or _LOOP.is_closed():
+        _LOOP = asyncio.new_event_loop()
+        asyncio.set_event_loop(_LOOP)
+    return _LOOP
+
+
+def _run_async(coro):
+    loop = _get_event_loop()
+    return loop.run_until_complete(coro)
+
+
+async def _get_authorized_client():
+    global _CLIENT
+    telethon_mod, import_err = _load_telethon()
+    if telethon_mod is None:
+        return None, _setup_instructions(f"telethon is not installed ({import_err})")
+
+    cfg, cfg_err = _load_config()
+    if cfg is None:
+        return None, _setup_instructions(cfg_err)
+
+    session_file = get_session_file_path()
+    if not os.path.isfile(session_file):
+        return None, _setup_instructions(f"Telegram session not found at {session_file}")
+
+    if _CLIENT is None:
+        client_cls = getattr(telethon_mod, "TelegramClient")
+        _CLIENT = client_cls(get_session_base_path(), cfg["api_id"], cfg["api_hash"])
+
+    if not _CLIENT.is_connected():
+        await _CLIENT.connect()
+
+    if not await _CLIENT.is_user_authorized():
+        return None, _setup_instructions("Telegram session is not authorized; run `agy-tg-setup` to sign in again.")
+
+    return _CLIENT, None
+
+
+async def _close_client():
+    global _CLIENT
+    if _CLIENT is not None:
+        try:
+            await _CLIENT.disconnect()
+        except Exception:
+            pass
+        _CLIENT = None
+
+
+def _dialog_type(dialog):
+    if getattr(dialog, "is_channel", False) and not getattr(dialog, "is_group", False):
+        return "channel"
+    if getattr(dialog, "is_group", False):
+        return "group"
+    if getattr(dialog, "is_user", False):
+        return "user"
+    return "other"
+
+
+def _iso_date(dt):
+    if dt is None:
+        return None
+    try:
+        return dt.isoformat()
+    except Exception:
+        return str(dt)
+
+
+def _media_type(msg):
+    media = getattr(msg, "media", None)
+    if media is None:
+        return None
+    return type(media).__name__
+
+
+def _sender_display(msg):
+    sender = getattr(msg, "sender", None)
+    if sender is not None:
+        first = getattr(sender, "first_name", "") or ""
+        last = getattr(sender, "last_name", "") or ""
+        title = getattr(sender, "title", "") or ""
+        uname = getattr(sender, "username", "") or ""
+        full = (f"{first} {last}").strip() or title
+        if full and uname:
+            return f"{full} (@{uname})"
+        if full:
+            return full
+        if uname:
+            return f"@{uname}"
+    sid = getattr(msg, "sender_id", None)
+    return str(sid) if sid is not None else ""
+
+
+def _serialize_message(msg):
+    text = getattr(msg, "message", None)
+    if text is None:
+        text = getattr(msg, "text", "") or ""
+    return {
+        "id": getattr(msg, "id", None),
+        "sender": _sender_display(msg),
+        "date": _iso_date(getattr(msg, "date", None)),
+        "text": str(text),
+        "media_type": _media_type(msg),
+    }
+
+
+def _serialize_dialog(dialog):
+    entity = getattr(dialog, "entity", None)
+    username = getattr(entity, "username", None) if entity is not None else None
+    return {
+        "id": getattr(dialog, "id", None),
+        "title": str(getattr(dialog, "name", "") or getattr(dialog, "title", "") or ""),
+        "username": f"@{username}" if username and not str(username).startswith("@") else username,
+        "type": _dialog_type(dialog),
+        "unread_count": int(getattr(dialog, "unread_count", 0) or 0),
+        "last_message_date": _iso_date(getattr(dialog, "date", None)),
+    }
+
+
+async def _resolve_chat_entity(client, chat_ref):
+    raw = str(chat_ref or "").strip()
+    if not raw:
+        raise ValueError("chat is required")
+
+    # Numeric chat ID
+    if raw.lstrip("-").isdigit():
+        return await client.get_entity(int(raw))
+
+    # @username
+    if raw.startswith("@"):
+        return await client.get_entity(raw)
+
+    # Try direct get_entity first; fall back to case-insensitive dialog title match
+    try:
+        return await client.get_entity(raw)
+    except Exception:
+        needle = raw.lower()
+        dialogs = await client.get_dialogs(limit=100)
+        for d in dialogs:
+            title = str(getattr(d, "name", "") or getattr(d, "title", "") or "").lower()
+            entity = getattr(d, "entity", None)
+            uname = str(getattr(entity, "username", "") or "").lower()
+            if title == needle or uname == needle:
+                return entity if entity is not None else d
+        for d in dialogs:
+            title = str(getattr(d, "name", "") or getattr(d, "title", "") or "").lower()
+            if needle in title:
+                entity = getattr(d, "entity", None)
+                return entity if entity is not None else d
+        raise ValueError(f"Could not find Telegram chat matching {raw!r}")
+
+
+# -----------------------------------------------------------------------------
+# Tool Definitions (MCP JSON Schema)
+# -----------------------------------------------------------------------------
+TOOLS = [
+    {
+        "name": "tg_status",
+        "description": (
+            "Check Telegram MTProto readiness: whether telethon is installed, config.json exists, "
+            "and user.session is authorized. Returns logged-in user info or exact 1-step setup instructions."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "tg_list_dialogs",
+        "description": "List recent Telegram dialogs (channels, groups, and direct chats) with unread counts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "default": 30,
+                    "description": "Maximum dialogs to return.",
+                },
+                "filter": {
+                    "type": "string",
+                    "enum": ["all", "channels", "groups", "users", "unread"],
+                    "default": "all",
+                    "description": "Filter dialogs by category or unread status.",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "tg_read_messages",
+        "description": "Read recent messages from a Telegram channel, group, or user chat.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "chat": {
+                    "type": "string",
+                    "description": "Target chat by @username, numeric chat ID, or title.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 20,
+                    "description": "Maximum messages to fetch.",
+                },
+                "unread_only": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "When true, return only currently unread messages in that chat.",
+                },
+            },
+            "required": ["chat"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "tg_unread_digest",
+        "description": (
+            "Fetch unread messages across Telegram channels, groups, and direct chats in a single call "
+            "for instant AI summarization and morning/evening digests."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "max_chats": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 15,
+                    "description": "Maximum unread dialogs to include.",
+                },
+                "messages_per_chat": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 10,
+                    "description": "Maximum unread messages fetched per dialog.",
+                },
+                "include_channels": {"type": "boolean", "default": True},
+                "include_groups": {"type": "boolean", "default": True},
+                "include_users": {"type": "boolean", "default": True},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "tg_search_messages",
+        "description": "Search Telegram messages globally or inside a specific chat.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query string."},
+                "chat": {"type": "string", "description": "Optional @username, ID, or title to scope search."},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 20,
+                    "description": "Maximum results to return.",
+                },
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "tg_send_message",
+        "description": "Send a text message to a Telegram chat (channel, group, or user).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "chat": {"type": "string", "description": "Target chat by @username, numeric ID, or title."},
+                "text": {"type": "string", "description": "Message text to send."},
+                "reply_to_msg_id": {"type": "integer", "description": "Optional message ID to reply to."},
+            },
+            "required": ["chat", "text"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "tg_mark_read",
+        "description": "Mark messages in a Telegram chat as read (up to max_id or latest).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "chat": {"type": "string", "description": "Target chat by @username, numeric ID, or title."},
+                "max_id": {"type": "integer", "description": "Optional highest message ID to acknowledge."},
+            },
+            "required": ["chat"],
+            "additionalProperties": False,
+        },
+    },
+]
+
+
+# -----------------------------------------------------------------------------
+# Async Tool Implementations
+# -----------------------------------------------------------------------------
+async def _op_status(_args):
+    telethon_mod, import_err = _load_telethon()
+    cfg, cfg_err = _load_config()
+    session_exists = os.path.isfile(get_session_file_path())
+
+    status = {
+        "ok": True,
+        "telethon_installed": telethon_mod is not None,
+        "config_present": cfg is not None,
+        "session_present": session_exists,
+        "authorized": False,
+        "storage_dir": get_telegram_dir(),
+    }
+    if telethon_mod is None:
+        status["next_step"] = f"Run `agy-tg-setup` to install telethon and sign in ({import_err})."
+        return status
+    if cfg is None:
+        status["next_step"] = f"Run `agy-tg-setup` to configure API_ID & API_HASH ({cfg_err})."
+        return status
+    if not session_exists:
+        status["next_step"] = "Run `agy-tg-setup` to sign in to your Telegram account."
+        return status
+
+    client, err = await _get_authorized_client()
+    if err is not None:
+        status["next_step"] = err.get("instructions")
+        status["error"] = err.get("error")
+        return status
+
+    me = await client.get_me()
+    status["authorized"] = True
+    status["user"] = {
+        "id": getattr(me, "id", None),
+        "first_name": getattr(me, "first_name", "") or "",
+        "last_name": getattr(me, "last_name", "") or "",
+        "username": getattr(me, "username", None),
+        "phone": getattr(me, "phone", None),
+    }
+    return status
+
+
+async def _op_list_dialogs(args):
+    client, err = await _get_authorized_client()
+    if err is not None:
+        return err
+
+    limit = max(1, min(int(args.get("limit", 30)), 200))
+    flt = str(args.get("filter") or "all").strip().lower()
+    fetch_limit = min(200, limit * 3) if flt != "all" else limit
+    dialogs = await client.get_dialogs(limit=fetch_limit)
+
+    items = []
+    for d in dialogs:
+        dtype = _dialog_type(d)
+        unread = int(getattr(d, "unread_count", 0) or 0)
+        if flt == "channels" and dtype != "channel":
+            continue
+        if flt == "groups" and dtype != "group":
+            continue
+        if flt == "users" and dtype != "user":
+            continue
+        if flt == "unread" and unread <= 0:
+            continue
+        items.append(_serialize_dialog(d))
+        if len(items) >= limit:
+            break
+
+    return {"ok": True, "filter": flt, "count": len(items), "dialogs": items}
+
+
+async def _op_read_messages(args):
+    client, err = await _get_authorized_client()
+    if err is not None:
+        return err
+
+    chat_ref = args.get("chat")
+    limit = max(1, min(int(args.get("limit", 20)), 100))
+    unread_only = bool(args.get("unread_only", False))
+    entity = await _resolve_chat_entity(client, chat_ref)
+
+    fetch_count = limit
+    if unread_only:
+        dialogs = await client.get_dialogs(limit=100)
+        target_id = getattr(entity, "id", None)
+        for d in dialogs:
+            d_entity = getattr(d, "entity", None)
+            if getattr(d, "id", None) == target_id or getattr(d_entity, "id", None) == target_id:
+                unread = int(getattr(d, "unread_count", 0) or 0)
+                if unread <= 0:
+                    return {
+                        "ok": True,
+                        "chat": str(chat_ref),
+                        "unread_only": True,
+                        "count": 0,
+                        "messages": [],
+                    }
+                fetch_count = min(limit, unread)
+                break
+
+    raw_msgs = await client.get_messages(entity, limit=fetch_count)
+    messages = [_serialize_message(m) for m in (raw_msgs or [])]
+    return {
+        "ok": True,
+        "chat": str(chat_ref),
+        "unread_only": unread_only,
+        "count": len(messages),
+        "messages": messages,
+    }
+
+
+async def _op_unread_digest(args):
+    client, err = await _get_authorized_client()
+    if err is not None:
+        return err
+
+    max_chats = max(1, min(int(args.get("max_chats", 15)), 50))
+    messages_per_chat = max(1, min(int(args.get("messages_per_chat", 10)), 50))
+    inc_channels = bool(args.get("include_channels", True))
+    inc_groups = bool(args.get("include_groups", True))
+    inc_users = bool(args.get("include_users", True))
+
+    dialogs = await client.get_dialogs(limit=150)
+    digest = []
+    total_messages = 0
+
+    for d in dialogs:
+        unread = int(getattr(d, "unread_count", 0) or 0)
+        if unread <= 0:
+            continue
+        dtype = _dialog_type(d)
+        if dtype == "channel" and not inc_channels:
+            continue
+        if dtype == "group" and not inc_groups:
+            continue
+        if dtype == "user" and not inc_users:
+            continue
+
+        entity = getattr(d, "entity", d)
+        take = min(unread, messages_per_chat)
+        raw_msgs = await client.get_messages(entity, limit=take)
+        serialized = [_serialize_message(m) for m in (raw_msgs or [])]
+        total_messages += len(serialized)
+        info = _serialize_dialog(d)
+        info["fetched_messages"] = serialized
+        digest.append(info)
+        if len(digest) >= max_chats:
+            break
+
+    return {
+        "ok": True,
+        "chats_count": len(digest),
+        "total_messages": total_messages,
+        "chats": digest,
+    }
+
+
+async def _op_search_messages(args):
+    client, err = await _get_authorized_client()
+    if err is not None:
+        return err
+
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"ok": False, "error": "query is required"}
+    limit = max(1, min(int(args.get("limit", 20)), 100))
+    chat_ref = str(args.get("chat") or "").strip()
+    entity = await _resolve_chat_entity(client, chat_ref) if chat_ref else None
+
+    raw_msgs = await client.get_messages(entity, limit=limit, search=query)
+    messages = [_serialize_message(m) for m in (raw_msgs or [])]
+    return {
+        "ok": True,
+        "query": query,
+        "chat": chat_ref or None,
+        "count": len(messages),
+        "messages": messages,
+    }
+
+
+async def _op_send_message(args):
+    client, err = await _get_authorized_client()
+    if err is not None:
+        return err
+
+    chat_ref = args.get("chat")
+    text = str(args.get("text") or "")
+    if not text.strip():
+        return {"ok": False, "error": "text is required"}
+    reply_to = args.get("reply_to_msg_id")
+    entity = await _resolve_chat_entity(client, chat_ref)
+
+    kwargs = {}
+    if reply_to is not None:
+        kwargs["reply_to"] = int(reply_to)
+    sent = await client.send_message(entity, text, **kwargs)
+    return {
+        "ok": True,
+        "chat": str(chat_ref),
+        "id": getattr(sent, "id", None),
+        "date": _iso_date(getattr(sent, "date", None)),
+    }
+
+
+async def _op_mark_read(args):
+    client, err = await _get_authorized_client()
+    if err is not None:
+        return err
+
+    chat_ref = args.get("chat")
+    max_id = args.get("max_id")
+    entity = await _resolve_chat_entity(client, chat_ref)
+
+    if max_id is not None:
+        await client.send_read_acknowledge(entity, max_id=int(max_id))
+    else:
+        await client.send_read_acknowledge(entity)
+    return {"ok": True, "chat": str(chat_ref), "max_id": int(max_id) if max_id is not None else None}
+
+
+ASYNC_HANDLERS = {
+    "tg_status": _op_status,
+    "tg_list_dialogs": _op_list_dialogs,
+    "tg_read_messages": _op_read_messages,
+    "tg_unread_digest": _op_unread_digest,
+    "tg_search_messages": _op_search_messages,
+    "tg_send_message": _op_send_message,
+    "tg_mark_read": _op_mark_read,
+}
+
+
+# -----------------------------------------------------------------------------
+# JSON-RPC 2.0 / MCP Protocol Dispatcher
+# -----------------------------------------------------------------------------
+def _rpc_result(req_id, result):
+    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+
+def _rpc_error(req_id, code, message, data=None):
+    err = {"code": code, "message": message}
+    if data is not None:
+        err["data"] = data
+    return {"jsonrpc": "2.0", "id": req_id, "error": err}
+
+
+def handle_message(msg):
+    if not isinstance(msg, dict):
+        return _rpc_error(None, -32600, "Invalid Request")
+
+    method = msg.get("method")
+    req_id = msg.get("id")
+    params = msg.get("params") or {}
+    is_notification = ("id" not in msg) or (isinstance(method, str) and method.startswith("notifications/"))
+
+    if not isinstance(method, str) or not method:
+        return None if is_notification else _rpc_error(req_id, -32600, "Missing method")
+
+    if method == "notifications/initialized" or method.startswith("notifications/"):
+        return None
+
+    if method == "initialize":
+        requested = params.get("protocolVersion") if isinstance(params, dict) else None
+        version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else DEFAULT_PROTOCOL_VERSION
+        return _rpc_result(req_id, {
+            "protocolVersion": version,
+            "capabilities": {
+                "tools": {"listChanged": False},
+            },
+            "serverInfo": {
+                "name": SERVER_NAME,
+                "version": SERVER_VERSION,
+            },
+        })
+
+    if method == "ping":
+        return _rpc_result(req_id, {})
+
+    if method == "tools/list":
+        return _rpc_result(req_id, {"tools": TOOLS})
+
+    if method == "tools/call":
+        if not isinstance(params, dict):
+            return _rpc_error(req_id, -32602, "Invalid params: object expected")
+        tool_name = params.get("name")
+        arguments = params.get("arguments")
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return _rpc_error(req_id, -32602, "Invalid tool arguments: object expected")
+
+        handler = ASYNC_HANDLERS.get(tool_name)
+        if handler is None:
+            return _rpc_error(req_id, -32602, f"Unknown tool: {tool_name}")
+
+        try:
+            result = _run_async(handler(arguments))
+            is_error = isinstance(result, dict) and (result.get("ok") is False)
+            return _rpc_result(req_id, {
+                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}],
+                "isError": is_error,
+            })
+        except Exception as e:
+            return _rpc_result(req_id, {
+                "content": [{"type": "text", "text": json.dumps({"ok": False, "error": str(e)})}],
+                "isError": True,
+            })
+
+    if is_notification:
+        return None
+    return _rpc_error(req_id, -32601, f"Method not found: {method}")
+
+
+def serve_stdio(stdin=None, stdout=None):
+    in_stream = stdin if stdin is not None else sys.stdin
+    out_stream = stdout if stdout is not None else sys.stdout
+
+    try:
+        while True:
+            line = in_stream.readline()
+            if not line:
+                break
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            try:
+                msg = json.loads(stripped)
+            except json.JSONDecodeError as e:
+                resp = _rpc_error(None, -32700, f"Parse error: {e}")
+                out_stream.write(json.dumps(resp, ensure_ascii=False) + "\n")
+                out_stream.flush()
+                continue
+
+            resp = handle_message(msg)
+            if resp is not None:
+                out_stream.write(json.dumps(resp, ensure_ascii=False) + "\n")
+                out_stream.flush()
+    finally:
+        if _LOOP is not None and not _LOOP.is_closed():
+            try:
+                _LOOP.run_until_complete(_close_client())
+            except Exception:
+                pass
+            try:
+                _LOOP.close()
+            except Exception:
+                pass
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-v"):
+        print(f"{SERVER_NAME} {SERVER_VERSION}")
+        return 0
+    if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
+        print("agy-mcp-telegram: Telegram MTProto MCP stdio server (Telethon).")
+        print("Run `agy-tg-setup` first to configure credentials and sign in.")
+        return 0
+
+    try:
+        serve_stdio()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

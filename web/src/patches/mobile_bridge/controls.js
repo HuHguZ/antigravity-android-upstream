@@ -206,6 +206,29 @@ function syncDrawerState() {
   if (stopSvcBtn) {
     stopSvcBtn.style.display = voiceActive ? 'inline-block' : 'none';
   }
+  var notifEnabled = state.notifAccess;
+  var notifStatus = doc.getElementById('ag-mb-notif-status');
+  if (notifStatus) {
+    notifStatus.textContent = notifEnabled
+      ? 'Status: Enabled (Quick Reply active)'
+      : 'Status: Not Enabled';
+  }
+  var notifBtn = doc.getElementById('ag-mb-notif-settings');
+  if (notifBtn) {
+    notifBtn.textContent = notifEnabled ? 'Settings' : 'Enable';
+  }
+  var commsGranted = state.commsGranted;
+  var commsStatus = doc.getElementById('ag-mb-comms-status');
+  if (commsStatus) {
+    commsStatus.textContent = commsGranted
+      ? 'Status: Granted'
+      : 'Status: Not Granted';
+  }
+  var commsBtn = doc.getElementById('ag-mb-comms-request');
+  if (commsBtn) {
+    commsBtn.textContent = commsGranted ? 'Granted' : 'Grant';
+    commsBtn.className = commsGranted ? 'ag-mb-btn-secondary' : 'ag-mb-btn';
+  }
 }
 
 function createToggleRow(id, title, subtitle, onToggle) {
@@ -452,6 +475,66 @@ function buildAndroidToolsCard(onActionDone) {
   clipRow.appendChild(clipText);
   clipRow.appendChild(pasteImgBtn);
   card.appendChild(clipRow);
+
+  // Notification Access (Quick Reply)
+  var notifRow = doc.createElement('div');
+  notifRow.className = 'ag-mb-row';
+  var notifText = doc.createElement('div');
+  notifText.className = 'ag-mb-row-label';
+  var notifTitle = doc.createElement('span');
+  notifTitle.className = 'ag-mb-row-title';
+  notifTitle.textContent = 'Notification Access (Quick Reply)';
+  var notifSub = doc.createElement('span');
+  notifSub.id = 'ag-mb-notif-status';
+  notifSub.className = 'ag-mb-row-sub';
+  notifSub.textContent = 'Status: Not Enabled';
+  notifText.appendChild(notifTitle);
+  notifText.appendChild(notifSub);
+
+  var notifBtn = doc.createElement('button');
+  notifBtn.id = 'ag-mb-notif-settings';
+  notifBtn.type = 'button';
+  notifBtn.className = 'ag-mb-btn-secondary';
+  notifBtn.textContent = 'Enable';
+  notifBtn.addEventListener('click', function () {
+    var res = triggerOpenNotificationListenerSettings();
+    if (!res.ok) {
+      showBridgeToast('Notification settings bridge unavailable');
+    }
+  });
+  notifRow.appendChild(notifText);
+  notifRow.appendChild(notifBtn);
+  card.appendChild(notifRow);
+
+  // Phone & Contacts (Calls)
+  var commsRow = doc.createElement('div');
+  commsRow.className = 'ag-mb-row';
+  var commsText = doc.createElement('div');
+  commsText.className = 'ag-mb-row-label';
+  var commsTitle = doc.createElement('span');
+  commsTitle.className = 'ag-mb-row-title';
+  commsTitle.textContent = 'Phone & Contacts (Calls)';
+  var commsSub = doc.createElement('span');
+  commsSub.id = 'ag-mb-comms-status';
+  commsSub.className = 'ag-mb-row-sub';
+  commsSub.textContent = 'Status: Not Granted';
+  commsText.appendChild(commsTitle);
+  commsText.appendChild(commsSub);
+
+  var commsBtn = doc.createElement('button');
+  commsBtn.id = 'ag-mb-comms-request';
+  commsBtn.type = 'button';
+  commsBtn.className = 'ag-mb-btn';
+  commsBtn.textContent = 'Grant';
+  commsBtn.addEventListener('click', function () {
+    var res = triggerRequestCommsPermissions();
+    if (!res.ok) {
+      showBridgeToast('Phone & Contacts permission bridge unavailable');
+    }
+  });
+  commsRow.appendChild(commsText);
+  commsRow.appendChild(commsBtn);
+  card.appendChild(commsRow);
 
   // Buffered Share Sheet action (only visible when buffered)
   var shareWrap = doc.createElement('div');

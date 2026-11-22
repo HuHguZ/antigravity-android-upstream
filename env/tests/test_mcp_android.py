@@ -126,6 +126,70 @@ class _MockGatewayHandler(BaseHTTPRequestHandler):
             elif act == "toggle_mute":
                 st["muted"] = not st["muted"]
             self._send_json({"ok": True, **st})
+        elif cmd == "inbox_list":
+            self._send_json({
+                "ok": True,
+                "enabled": True,
+                "connected": True,
+                "count": 1,
+                "notifications": [{
+                    "key": "0|org.telegram.messenger|1|null|10001",
+                    "package_name": "org.telegram.messenger",
+                    "app_label": "Telegram",
+                    "title": "Alice",
+                    "text": "Are you free?",
+                    "big_text": "Are you free?",
+                    "conversation_title": "",
+                    "posted_at": 1700000100000,
+                    "active": True,
+                    "can_reply": True,
+                    "reply_label": "Reply",
+                }],
+            })
+        elif cmd == "inbox_reply":
+            self._send_json({"ok": True, "replied": True, "key": payload.get("key")})
+        elif cmd == "inbox_dismiss":
+            self._send_json({"ok": True, "dismissed": True, "key": payload.get("key")})
+        elif cmd == "call_status":
+            self._send_json({
+                "ok": True,
+                "state": "ringing",
+                "speakerphone": False,
+                "incoming_number": "+15551234567",
+                "contact_name": "Alice",
+                "permissions": {
+                    "read_phone_state": True,
+                    "answer_phone_calls": True,
+                    "read_call_log": True,
+                    "read_contacts": True,
+                    "call_phone": True,
+                },
+            })
+        elif cmd == "call_answer":
+            self._send_json({"ok": True, "answered": True})
+        elif cmd == "call_end":
+            self._send_json({"ok": True, "ended": True})
+        elif cmd == "call_speaker":
+            self._send_json({"ok": True, "speakerphone": bool(payload.get("enabled"))})
+        elif cmd == "call_history":
+            self._send_json({
+                "ok": True,
+                "count": 1,
+                "calls": [{"number": "+15551234567", "name": "Alice", "type": "missed", "date_ms": 1700000000000, "duration_sec": 0}],
+            })
+        elif cmd == "contacts_search":
+            self._send_json({
+                "ok": True,
+                "count": 1,
+                "contacts": [{"name": "Alice", "number": "+15551234567", "label": "Mobile"}],
+            })
+        elif cmd == "call_dial":
+            self._send_json({
+                "ok": True,
+                "dialed": True,
+                "direct": bool(payload.get("direct", False)),
+                "number": payload.get("number"),
+            })
         elif cmd == "clipboard":
             if payload.get("action") == "get":
                 self._send_json({"ok": True, "text": self.__class__.clipboard_value})
@@ -290,6 +354,16 @@ class TestMcpAndroidServer(unittest.TestCase):
             "android_shizuku_exec",
             "android_browser_automate",
             "android_schedule_task",
+            "android_inbox_list",
+            "android_inbox_reply",
+            "android_inbox_dismiss",
+            "android_call_status",
+            "android_call_answer",
+            "android_call_end",
+            "android_call_speaker",
+            "android_call_history",
+            "android_contacts_search",
+            "android_call_dial",
         }
         self.assertEqual(names, expected_tools)
         for t in tools:
@@ -451,6 +525,51 @@ class TestMcpAndroidServer(unittest.TestCase):
         self.assertFalse(is_err)
         self.assertEqual(rm_res["status"], "success")
 
+        # 12. Notification inbox (list -> reply -> dismiss)
+        inbox, is_err = self._call_tool(20, "android_inbox_list", {"package": "org.telegram.messenger", "replyable_only": True, "limit": 10})
+        self.assertFalse(is_err)
+        self.assertEqual(inbox["count"], 1)
+        notif_key = inbox["notifications"][0]["key"]
+
+        rep, is_err = self._call_tool(21, "android_inbox_reply", {"key": notif_key, "message": "On my way!"})
+        self.assertFalse(is_err)
+        self.assertTrue(rep["replied"])
+
+        dis, is_err = self._call_tool(22, "android_inbox_dismiss", {"key": notif_key})
+        self.assertFalse(is_err)
+        self.assertTrue(dis["dismissed"])
+
+        # 13. Calls & Contacts (status -> answer -> speaker -> end -> history -> contacts -> dial)
+        cs, is_err = self._call_tool(23, "android_call_status")
+        self.assertFalse(is_err)
+        self.assertEqual(cs["state"], "ringing")
+        self.assertEqual(cs["contact_name"], "Alice")
+
+        ans, is_err = self._call_tool(24, "android_call_answer")
+        self.assertFalse(is_err)
+        self.assertTrue(ans["answered"])
+
+        spk, is_err = self._call_tool(25, "android_call_speaker", {"enabled": True})
+        self.assertFalse(is_err)
+        self.assertTrue(spk["speakerphone"])
+
+        end, is_err = self._call_tool(26, "android_call_end")
+        self.assertFalse(is_err)
+        self.assertTrue(end["ended"])
+
+        hist, is_err = self._call_tool(27, "android_call_history", {"limit": 5, "missed_only": True})
+        self.assertFalse(is_err)
+        self.assertEqual(hist["calls"][0]["type"], "missed")
+
+        ct, is_err = self._call_tool(28, "android_contacts_search", {"query": "Alice", "limit": 5})
+        self.assertFalse(is_err)
+        self.assertEqual(ct["contacts"][0]["number"], "+15551234567")
+
+        dial, is_err = self._call_tool(29, "android_call_dial", {"number": "+15551234567", "direct": False})
+        self.assertFalse(is_err)
+        self.assertTrue(dial["dialed"])
+        self.assertFalse(dial["direct"])
+
     def test_error_handling(self):
         # Unknown method
         err_resp = self._rpc({"jsonrpc": "2.0", "id": 100, "method": "nonexistent/method"})
@@ -484,7 +603,7 @@ class TestPackSeedSkills(unittest.TestCase):
         try:
             copied = pack_seed.pack_seed(src_seed, tmp_out)
             self.assertIn("AGENTS.md", copied)
-            for skill in ("android-device", "android-browser", "android-daemon"):
+            for skill in ("android-device", "android-browser", "android-daemon", "telegram-assistant", "android-comms"):
                 rel = f"skills/{skill}/SKILL.md"
                 self.assertIn(rel, copied)
                 full = os.path.join(tmp_out, "skills", skill, "SKILL.md")

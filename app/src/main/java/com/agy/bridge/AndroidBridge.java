@@ -1,6 +1,8 @@
 package com.agy.bridge;
 
 import android.content.Context;
+import android.content.Intent;
+import android.provider.Settings;
 import android.webkit.JavascriptInterface;
 
 import com.agy.core.VoiceForegroundService;
@@ -273,6 +275,59 @@ public final class AndroidBridge {
             return "{\"ok\":false,\"error\":\"unauthorized\"}";
         }
         return ClipboardImageReader.readClipboardImageJson(appContext);
+    }
+
+    @JavascriptInterface
+    public boolean isNotificationListenerEnabled() {
+        return MainActivity.isNotificationListenerEnabled(appContext);
+    }
+
+    @JavascriptInterface
+    public boolean openNotificationListenerSettings(String token) {
+        if (!matchesNativeBridgeToken(token)) {
+            return false;
+        }
+        final MainActivity act = activityRef != null ? activityRef.get() : MainActivity.activeActivity;
+        if (act != null) {
+            act.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    act.openNotificationListenerSettings();
+                }
+            });
+            return true;
+        }
+        try {
+            Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            appContext.startActivity(intent);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    @JavascriptInterface
+    public boolean hasCommsPermissions() {
+        return MainActivity.hasCommsPermissions(appContext);
+    }
+
+    @JavascriptInterface
+    public boolean requestCommsPermissions(String token) {
+        if (!matchesNativeBridgeToken(token)) {
+            return false;
+        }
+        final MainActivity act = activityRef != null ? activityRef.get() : MainActivity.activeActivity;
+        if (act == null) {
+            return false;
+        }
+        act.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                act.requestCommsPermissions();
+            }
+        });
+        return true;
     }
 
     // Native-only helpers used while preparing the trusted app document.

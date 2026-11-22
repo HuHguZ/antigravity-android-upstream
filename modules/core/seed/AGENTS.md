@@ -49,29 +49,34 @@
 
 ---
 
-## 3. Native Android MCP Servers (`android-device` & `chrome_devtools`) & Bundled Skills
+## 3. Native Android MCP Servers (`android-device`, `chrome_devtools` & `telegram`) & Bundled Skills
 
 ### Pre-configured MCP Servers (`~/.gemini/config/mcp_config.json`)
-Antigravity automatically seeds two zero-dependency stdio MCP servers into `$HOME/.gemini/config/mcp_config.json` (invoked via Bionic bridges in `$HOME/runtime/bin/`):
+Antigravity automatically seeds three zero-dependency-at-startup stdio MCP servers into `$HOME/.gemini/config/mcp_config.json` (invoked via Bionic bridges in `$HOME/runtime/bin/`):
 
 1. **`chrome_devtools` (`$HOME/runtime/bin/agy-mcp-browser` -> `$PREFIX/bin/agy-mcp-browser`)**:
    - Standard Chrome DevTools MCP tool surface backed by native Android WebView (`SystemGatewayServer` `browser_auto`, zero desktop Chrome required): `list_pages`, `new_page`, `select_page`, `close_page`, `navigate_page`, `take_snapshot` (assigns `uid=e1..eN` to interactive elements), `take_screenshot` (PNG path + inline image), `click`, `fill`, `press_key`, `evaluate_script`, `list_console_messages`, `wait_for`.
-2. **`android-device` (`$HOME/runtime/bin/agy-mcp-android` -> `$PREFIX/bin/agy-mcp-android`)**:
+2. **`telegram` (`$HOME/runtime/bin/agy-mcp-telegram` -> `$PREFIX/bin/agy-mcp-telegram`)**:
+   - Personal Telegram MTProto assistant (Telethon, lazy-imported; configure once via `agy-tg-setup` storing `0600` credentials under `$HOME/.gemini/antigravity-app/telegram/`): `tg_status`, `tg_list_dialogs`, `tg_read_messages`, `tg_unread_digest`, `tg_search_messages`, `tg_send_message`, `tg_mark_read`.
+3. **`android-device` (`$HOME/runtime/bin/agy-mcp-android` -> `$PREFIX/bin/agy-mcp-android`)**:
    - Communicates with `SystemGatewayServer` (`127.0.0.1:<port>`, port in `$HOME/logs/gateway.port`, default `45160`), Shizuku (`rish`), and `agy-daemon`:
-
-- **Device & Feedback:** `android_device_info` (battery, charging, network, memory, storage), `android_toast`, `android_vibrate`, `android_torch`.
-- **Clipboard:** `android_clipboard_get`, `android_clipboard_set`.
-- **Notifications, Interactive Approvals & Subagent Progress:** `android_notify` (supports progress bars, `agy_tasks`/`agy_alerts`/`agy_subagents` channels, and `approval: true` preset with **Approve**, **Deny**, and **Deny w/ Comment** inline `RemoteInput` reply), `android_wait_approval` (returns `decision` + inline `comment`), and `android_subagent_notify` (low-buzz progress notifications with one-tap **Cancel** wired to ConnectRPC `CancelCascadeInvocation`).
-- **Voice Session Control:** `android_voice_service` (`start`, `stop`, `mute`, `unmute`, `toggle_mute`, `status` on `VoiceForegroundService` for audio focus & speakerphone routing).
-- **Elevated ADB Shell:** `android_shizuku_exec` (runs `logcat`, `pm`, `am`, `dumpsys`, `screencap` via `rish`).
-- **Mobile Browser Automation:** `android_browser_automate` (isolated offscreen WebView supporting `navigate`, `eval`, `click`, `type`, `get_text`, `screenshot`, `console_logs`, `close` — always call `close` when finished to release memory).
-- **Autonomous Scheduling:** `android_schedule_task` (`add`, `list`, `pause`, `resume`, `remove`, `run_now`, `status` on `agy-daemon`).
+   - **Device & Feedback:** `android_device_info` (battery, charging, network, memory, storage), `android_toast`, `android_vibrate`, `android_torch`.
+   - **Clipboard:** `android_clipboard_get`, `android_clipboard_set`.
+   - **Notifications, Interactive Approvals & Subagent Progress:** `android_notify` (supports progress bars, `agy_tasks`/`agy_alerts`/`agy_subagents` channels, and `approval: true` preset with **Approve**, **Deny**, and **Deny w/ Comment** inline `RemoteInput` reply), `android_wait_approval` (returns `decision` + inline `comment`), and `android_subagent_notify` (low-buzz progress notifications with one-tap **Cancel** wired to ConnectRPC `CancelCascadeInvocation`).
+   - **Notification Inbox & Quick Reply:** `android_inbox_list`, `android_inbox_reply` (WearOS-style Quick Reply for Telegram/WhatsApp/SMS), `android_inbox_dismiss` (enable via **Settings -> Android Tools -> Notification Access**).
+   - **Calls & Contacts:** `android_call_status`, `android_call_answer`, `android_call_end`, `android_call_speaker`, `android_call_history`, `android_contacts_search`, `android_call_dial` (grant permissions via **Settings -> Android Tools -> Phone & Contacts**).
+   - **Voice Session Control:** `android_voice_service` (`start`, `stop`, `mute`, `unmute`, `toggle_mute`, `status` on `VoiceForegroundService` for audio focus & speakerphone routing).
+   - **Elevated ADB Shell:** `android_shizuku_exec` (runs `logcat`, `pm`, `am`, `dumpsys`, `screencap` via `rish`).
+   - **Mobile Browser Automation:** `android_browser_automate` (isolated offscreen WebView supporting `navigate`, `eval`, `click`, `type`, `get_text`, `screenshot`, `console_logs`, `close` — always call `close` when finished to release memory).
+   - **Autonomous Scheduling:** `android_schedule_task` (`add`, `list`, `pause`, `resume`, `remove`, `run_now`, `status` on `agy-daemon`).
 
 ### Bundled Skills
-Three curated skills are automatically seeded into `$HOME/.gemini/config/skills/` (and mirrored in `$PREFIX/etc/antigravity/skills/`):
+Five curated skills are automatically seeded into `$HOME/.gemini/config/skills/` (and mirrored in `$PREFIX/etc/antigravity/skills/`):
 - **`android-device`**: Device telemetry, clipboard, interactive Approve/Reject notifications, torch/haptics, Shizuku `rish` workflows, and `SystemGatewayServer`.
-- **`android-browser`**: Headless mobile browser automation (`android_browser_automate`) for scraping, UI verification, screenshots, and localhost live preview.
+- **`android-browser`**: Headless mobile browser automation (`chrome_devtools` & `android_browser_automate`) for scraping, UI verification, screenshots, and localhost live preview.
 - **`android-daemon`**: Autonomous background AI task scheduling, watchers, and ConnectRPC execution.
+- **`telegram-assistant`**: Personal Telegram MTProto reading, unread digests, search, and messaging via `telegram` MCP + `agy-tg-setup`.
+- **`android-comms`**: Android Notification Inbox Quick Reply, call answering/ending/speakerphone/history, contacts search, and dialing.
 
 ---
 

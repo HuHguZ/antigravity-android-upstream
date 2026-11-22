@@ -15,6 +15,8 @@ public final class GatewayDispatcher {
 
     private final Context appContext;
     private final NotificationHandler notificationHandler;
+    private final NotificationInboxHandler notificationInboxHandler;
+    private final CallHandler callHandler;
     private final BrowserHandler browserHandler;
     private final WebBrowserAutomationHandler webBrowserAutomationHandler;
     private final PowerHandler powerHandler;
@@ -27,6 +29,8 @@ public final class GatewayDispatcher {
     public GatewayDispatcher(Context context, LogRingBuffer logBuffer) {
         this.appContext = context.getApplicationContext();
         this.notificationHandler = new NotificationHandler(context);
+        this.notificationInboxHandler = new NotificationInboxHandler(context);
+        this.callHandler = new CallHandler(context);
         this.browserHandler = new BrowserHandler(context);
         this.webBrowserAutomationHandler = new WebBrowserAutomationHandler(context);
         this.powerHandler = new PowerHandler(context);
@@ -51,6 +55,28 @@ public final class GatewayDispatcher {
                 return ApprovalActionReceiver.handlePoll(appContext, payload);
             case "voice_service":
                 return VoiceForegroundService.handleCommand(appContext, payload);
+            case "inbox_status":
+                return notificationInboxHandler.handleStatus();
+            case "inbox_list":
+                return notificationInboxHandler.handleList(payload);
+            case "inbox_reply":
+                return notificationInboxHandler.handleReply(payload);
+            case "inbox_dismiss":
+                return notificationInboxHandler.handleDismiss(payload);
+            case "call_status":
+                return callHandler.handleStatus();
+            case "call_answer":
+                return callHandler.handleAnswer();
+            case "call_end":
+                return callHandler.handleEnd();
+            case "call_speaker":
+                return callHandler.handleSpeaker(payload);
+            case "call_history":
+                return callHandler.handleHistory(payload);
+            case "contacts_search":
+                return callHandler.handleContactsSearch(payload);
+            case "call_dial":
+                return callHandler.handleDial(payload);
             case "open_url":
                 return browserHandler.handle(payload);
             case "browser_auto":
@@ -119,6 +145,7 @@ public final class GatewayDispatcher {
 
     public void releaseResources() {
         webBrowserAutomationHandler.close();
+        callHandler.release();
         powerHandler.releaseAll();
         if (VoiceForegroundService.isActive()) {
             VoiceForegroundService.stop(appContext);

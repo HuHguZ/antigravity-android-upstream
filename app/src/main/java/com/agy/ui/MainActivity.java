@@ -64,6 +64,7 @@ public class MainActivity extends Activity
     private static final int REQUEST_STORAGE = 100;
     private static final int REQUEST_FILE_CHOOSER = 1002;
     private static final int REQUEST_RECORD_AUDIO = 1003;
+    private static final int REQUEST_COMMS_PERMISSIONS = 1005;
     private static final long SPLASH_TIMEOUT_MS = 60000;
     private static final long POLL_STARTUP_INTERVAL_MS = 50;
     private static final long POLL_READY_INTERVAL_MS = 1000;
@@ -476,6 +477,88 @@ public class MainActivity extends Activity
         });
     }
 
+    public static boolean isNotificationListenerEnabled(android.content.Context context) {
+        if (context == null) {
+            return false;
+        }
+        try {
+            String flat = android.provider.Settings.Secure.getString(
+                    context.getContentResolver(), "enabled_notification_listeners");
+            if (flat == null || flat.isEmpty()) {
+                return false;
+            }
+            String pkg = context.getPackageName();
+            for (String entry : flat.split(":")) {
+                if (entry == null || entry.isEmpty()) {
+                    continue;
+                }
+                if (entry.equals(pkg) || entry.startsWith(pkg + "/")) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    public void openNotificationListenerSettings() {
+        try {
+            Intent intent = new Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+            startActivity(intent);
+        } catch (Exception e) {
+            Log.w(TAG, "cannot open notification listener settings: " + e.getMessage());
+        }
+    }
+
+    public static boolean hasCommsPermissions(android.content.Context context) {
+        if (context == null) {
+            return false;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true;
+        }
+        boolean granted = context.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
+                == PackageManager.PERMISSION_GRANTED
+                && context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG)
+                == PackageManager.PERMISSION_GRANTED
+                && context.checkSelfPermission(android.Manifest.permission.READ_CONTACTS)
+                == PackageManager.PERMISSION_GRANTED;
+        if (granted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            granted = context.checkSelfPermission(android.Manifest.permission.ANSWER_PHONE_CALLS)
+                    == PackageManager.PERMISSION_GRANTED;
+        }
+        return granted;
+    }
+
+    public void requestCommsPermissions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            notifyCommsPermissionsChanged();
+            return;
+        }
+        List<String> perms = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            perms.add(android.Manifest.permission.ANSWER_PHONE_CALLS);
+        }
+        perms.add(android.Manifest.permission.READ_PHONE_STATE);
+        perms.add(android.Manifest.permission.READ_CALL_LOG);
+        perms.add(android.Manifest.permission.READ_CONTACTS);
+        perms.add(android.Manifest.permission.CALL_PHONE);
+        requestPermissions(perms.toArray(new String[0]), REQUEST_COMMS_PERMISSIONS);
+    }
+
+    public void notifyCommsPermissionsChanged() {
+        WebView wv = webViewHost != null ? webViewHost.getWebView() : null;
+        if (wv == null) {
+            return;
+        }
+        boolean notifAccess = isNotificationListenerEnabled(this);
+        boolean commsGranted = hasCommsPermissions(this);
+        String js = "window.__agCommsPermissionsChanged && window.__agCommsPermissionsChanged({notifAccess:"
+                + (notifAccess ? "true" : "false")
+                + ",commsGranted:" + (commsGranted ? "true" : "false") + "});";
+        wv.evaluateJavascript(js, null);
+    }
+
     @Override
     public void requestRecordAudioPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -588,6 +671,9 @@ public class MainActivity extends Activity
             AppLifecycle.resume(webViewHost.getWebView());
         }
         refreshTheme();
+        if (uiReady) {
+            notifyCommsPermissionsChanged();
+        }
         handler.removeCallbacks(pollServer);
         handler.post(pollServer);
     }
@@ -820,6 +906,10 @@ public class MainActivity extends Activity
             if (voiceDictation != null) {
                 voiceDictation.onRecordAudioPermissionResult(granted);
             }
+            return;
+        }
+        if (requestCode == REQUEST_COMMS_PERMISSIONS) {
+            notifyCommsPermissionsChanged();
             return;
         }
         if (requestCode == com.agy.ui.download.FileDownloader.REQUEST_STORAGE_DOWNLOAD) {

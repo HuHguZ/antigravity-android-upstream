@@ -26,12 +26,29 @@ function onExtraKeysVisibilityChanged(visible) {
   syncDrawerState();
 }
 
+function onCommsPermissionsChanged(payload) {
+  var info = payload;
+  if (typeof payload === 'string') {
+    try { info = JSON.parse(payload); } catch (_) { info = null; }
+  }
+  if (!info || typeof info !== 'object') return;
+  if (typeof info.notifAccess !== 'undefined') {
+    state.notifAccess = !!info.notifAccess;
+  }
+  if (typeof info.commsGranted !== 'undefined') {
+    state.commsGranted = !!info.commsGranted;
+  }
+  syncDrawerState();
+}
+
 function installMobileBridge() {
   if (state.installed) return;
   state.installed = true;
   state.voiceServiceActive = isVoiceServiceActiveNative();
   state.voiceServiceMuted = isVoiceMutedNative();
   state.dictating = isVoiceDictatingNative();
+  state.notifAccess = isNotificationListenerEnabledState();
+  state.commsGranted = hasCommsPermissionsState();
   installVoiceWebSocketHook();
   installMicTrackObserver();
   installClipboardImageInterceptor();
@@ -57,6 +74,7 @@ global.__agDeliverVoiceText = deliverVoiceText;
 global.__agVoiceDictationStateChanged = onVoiceDictationStateChanged;
 global.__agVoiceServiceStateChanged = onVoiceServiceStateChanged;
 global.__agDeliverPastedImage = deliverPastedImage;
+global.__agCommsPermissionsChanged = onCommsPermissionsChanged;
 
 global.__agMobileBridge = {
   __installed: true,
@@ -67,6 +85,7 @@ global.__agMobileBridge = {
   pasteImageFromClipboard: pasteImageFromNativeClipboard,
   onVoiceDictationStateChanged: onVoiceDictationStateChanged,
   onVoiceServiceStateChanged: onVoiceServiceStateChanged,
+  onCommsPermissionsChanged: onCommsPermissionsChanged,
   applyBufferedShare: applyBufferedShare,
   openDrawer: function () { setDrawerOpen(true); },
   closeDrawer: function () { setDrawerOpen(false); },
@@ -78,6 +97,10 @@ global.__agMobileBridge = {
   setExtraKeysVisible: setExtraKeysState,
   openLocalPreview: triggerLocalPreview,
   openRemotePortal: triggerRemotePortal,
+  isNotificationListenerEnabled: isNotificationListenerEnabledState,
+  openNotificationListenerSettings: triggerOpenNotificationListenerSettings,
+  hasCommsPermissions: hasCommsPermissionsState,
+  requestCommsPermissions: triggerRequestCommsPermissions,
   startVoiceDictation: startNativeVoiceDictation,
   stopVoiceDictation: stopNativeVoiceDictation,
   startVoiceService: startNativeVoiceService,
@@ -97,6 +120,8 @@ global.__agMobileBridge = {
       dictating: state.dictating,
       voiceServiceActive: state.voiceServiceActive || isVoiceServiceActiveNative(),
       voiceServiceMuted: state.voiceServiceMuted,
+      notifAccess: state.notifAccess,
+      commsGranted: state.commsGranted,
       activeVoiceSockets: state.activeVoiceSockets.length,
       desktopMode: getDesktopModeState(),
       extraKeysVisible: getExtraKeysState(),

@@ -37,6 +37,8 @@ var state = {
   voiceInterim: '',
   voiceServiceActive: false,
   voiceServiceMuted: false,
+  notifAccess: false,
+  commsGranted: false,
   activeVoiceSockets: [],
   activeMicTracks: [],
   toastTimer: 0,
@@ -174,6 +176,56 @@ function triggerRemotePortal() {
     }
   } catch (e) {
     try { console.warn('[agMobileBridge] openRemotePortal failed:', e); } catch (_) {}
+    return { ok: false, reason: 'bridge_error' };
+  }
+  return { ok: false, reason: 'bridge_unavailable' };
+}
+
+function isNotificationListenerEnabledState() {
+  var android = getAndroid();
+  try {
+    if (android && typeof android.isNotificationListenerEnabled === 'function') {
+      return !!android.isNotificationListenerEnabled();
+    }
+  } catch (_) {}
+  return !!state.notifAccess;
+}
+
+function triggerOpenNotificationListenerSettings() {
+  var android = getAndroid();
+  try {
+    if (android && typeof android.openNotificationListenerSettings === 'function') {
+      var opened = android.openNotificationListenerSettings(getNativeToken());
+      if (opened === false) return { ok: false, reason: 'native_rejected' };
+      return { ok: true };
+    }
+  } catch (e) {
+    try { console.warn('[agMobileBridge] openNotificationListenerSettings failed:', e); } catch (_) {}
+    return { ok: false, reason: 'bridge_error' };
+  }
+  return { ok: false, reason: 'bridge_unavailable' };
+}
+
+function hasCommsPermissionsState() {
+  var android = getAndroid();
+  try {
+    if (android && typeof android.hasCommsPermissions === 'function') {
+      return !!android.hasCommsPermissions();
+    }
+  } catch (_) {}
+  return !!state.commsGranted;
+}
+
+function triggerRequestCommsPermissions() {
+  var android = getAndroid();
+  try {
+    if (android && typeof android.requestCommsPermissions === 'function') {
+      var requested = android.requestCommsPermissions(getNativeToken());
+      if (requested === false) return { ok: false, reason: 'native_rejected' };
+      return { ok: true };
+    }
+  } catch (e) {
+    try { console.warn('[agMobileBridge] requestCommsPermissions failed:', e); } catch (_) {}
     return { ok: false, reason: 'bridge_error' };
   }
   return { ok: false, reason: 'bridge_unavailable' };

@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""
+agy-tg-setup - Interactive setup wizard for Antigravity Android Telegram MCP
+(`agy-mcp-telegram`).
+
+Installs `telethon` if missing, prompts for API_ID & API_HASH (from
+https://my.telegram.org/apps), runs interactive MTProto login (phone, SMS/app
+code, optional 2FA password), and persists config.json + user.session with
+strict owner-only 0600 permissions under:
+  $HOME/.gemini/antigravity-app/telegram/
+"""
+
+import os
+import sys
+import json
+import getpass
+import argparse
+import asyncio
+import importlib
+import subprocess
+
+
+def get_prefix():
+    env_prefix = os.environ.get("PREFIX", "").strip()
+    if env_prefix:
+        return env_prefix
+    return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+def get_home():
+    env_home = os.environ.get("HOME", "").strip()
+    if env_home:
+        return env_home
+    return os.path.dirname(get_prefix())
+
+
+def get_telegram_dir():
+    override = os.environ.get("AGY_TELEGRAM_DIR", "").strip()
+    if override:
+        return override
+    return os.path.join(get_home(), ".gemini", "antigravity-app", "telegram")
+
+
+def _chmod_safe(path, mode):
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
+def _ensure_dir_secure(path):
+    os.makedirs(path, exist_ok=True)
+    _chmod_safe(path, 0o700)
+
+
+def _ensure_telethon():
+    try:
+        return importlib.import_module("telethon")
+    except ImportError:
+        pass
+
+    print("[agy-tg-setup] `telethon` is not installed. Installing via pip...")
+    env = os.environ.copy()
+    env["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
+    cmd = [sys.executable, "-m", "pip", "install", "--no-input", "telethon"]
+    proc = subprocess.run(cmd, env=env)
+    if proc.returncode != 0:
+        print("[agy-tg-setup] ERROR: `pip install telethon` failed.", file=sys.stderr)
+        print("Try manually: python3 -m pip install telethon", file=sys.stderr)
+        sys.exit(1)
+
+    importlib.invalidate_caches()
+    return importlib.import_module("telethon")
+
+
+def _save_config(config_path, api_id, api_hash):
+    tmp_path = config_path + ".tmp"
+    payload = json.dumps({"api_id": int(api_id), "api_hash": str(api_hash)}, indent=2) + "\n"
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    os.replace(tmp_path, config_path)
+    _chmod_safe(config_path, 0o600)
+
+
+def _protect_session_files(session_base):
+    for suffix in (".session", ".session-journal", ".session-wal", ".session-shm"):
+        p = session_base + suffix
+        if os.path.isfile(p):
+            _chmod_safe(p, 0o600)
+
+
+def cmd_status(tg_dir):
+    cfg_path = os.path.join(tg_dir, "config.json")
+    sess_path = os.path.join(tg_dir, "user.session")
+    try:
+        importlib.import_module("telethon")
+        has_telethon = True
+    except ImportError:
+        has_telethon = False
+    print(f"Telegram dir:  {tg_dir}")
+    print(f"Telethon:      {'installed' if has_telethon else 'NOT installed'}")
+    print(f"config.json:   {'present' if os.path.isfile(cfg_path) else 'missing'}")
+    print(f"user.session:  {'present' if os.path.isfile(sess_path) else 'missing'}")
+    return 0
+
+
+def cmd_logout(tg_dir):
+    session_base = os.path.join(tg_dir, "user")
+    removed = 0
+    for suffix in (".session", ".session-journal", ".session-wal", ".session-shm"):
+        p = session_base + suffix
+        if os.path.isfile(p):
+            os.remove(p)
+            removed += 1
+    print(f"[agy-tg-setup] Removed {removed} local session file(s) from {tg_dir}.")
+    return 0
+
+
+async def _interactive_login(telethon_mod, session_base, api_id, api_hash):
+    client_cls = getattr(telethon_mod, "TelegramClient")
+    client = client_cls(session_base, api_id, api_hash)
+    await client.start(
+        phone=lambda: input("Phone number (international format, e.g. +1234567890): ").strip(),
+        code_callback=lambda: input("Login code from Telegram / SMS: ").strip(),
+        password=lambda: getpass.getpass("2FA password (hidden): "),
+    )
+    me = await client.get_me()
+    await client.disconnect()
+    return me
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Interactive setup wizard for Antigravity Telegram MCP.")
+    parser.add_argument("--status", action="store_true", help="Show current Telegram MCP configuration status.")
+    parser.add_argument("--logout", action="store_true", help="Delete saved Telegram session file.")
+    args = parser.parse_args()
+
+    tg_dir = get_telegram_dir()
+    if args.status:
+        return cmd_status(tg_dir)
+    if args.logout:
+        return cmd_logout(tg_dir)
+
+    print("====================================================")
+    print("  Antigravity Android — Telegram MCP Setup Wizard")
+    print("====================================================")
+    print("Credentials are stored locally (0600) in:")
+    print(f"  {tg_dir}")
+    print("Get your API_ID and API_HASH at: https://my.telegram.org/apps\n")
+
+    telethon_mod = _ensure_telethon()
+    _ensure_dir_secure(tg_dir)
+
+    config_path = os.path.join(tg_dir, "config.json")
+    existing_id = ""
+    existing_hash = ""
+    if os.path.isfile(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            existing_id = str(cfg.get("api_id") or "")
+            existing_hash = str(cfg.get("api_hash") or "")
+        except Exception:
+            pass
+
+    prompt_id = f"API_ID [{existing_id}]: " if existing_id else "API_ID: "
+    raw_id = input(prompt_id).strip() or existing_id
+    try:
+        api_id = int(raw_id)
+        if api_id <= 0:
+            raise ValueError("API_ID must be positive")
+    except ValueError:
+        print("[agy-tg-setup] ERROR: API_ID must be a positive integer.", file=sys.stderr)
+        return 1
+
+    masked_hash = f"{existing_hash[:4]}...{existing_hash[-4:]}" if len(existing_hash) >= 8 else existing_hash
+    prompt_hash = f"API_HASH [{masked_hash}]: " if existing_hash else "API_HASH: "
+    api_hash = input(prompt_hash).strip() or existing_hash
+    if not api_hash:
+        print("[agy-tg-setup] ERROR: API_HASH is required.", file=sys.stderr)
+        return 1
+
+    _save_config(config_path, api_id, api_hash)
+    print(f"[agy-tg-setup] Saved {config_path} (mode 0600).\n")
+
+    session_base = os.path.join(tg_dir, "user")
+    try:
+        me = asyncio.run(_interactive_login(telethon_mod, session_base, api_id, api_hash))
+    except KeyboardInterrupt:
+        print("\n[agy-tg-setup] Cancelled.")
+        return 130
+    except Exception as e:
+        print(f"[agy-tg-setup] Login failed: {e}", file=sys.stderr)
+        return 1
+
+    _protect_session_files(session_base)
+    name = (f"{getattr(me, 'first_name', '') or ''} {getattr(me, 'last_name', '') or ''}").strip()
+    uname = getattr(me, "username", None)
+    handle = f" (@{uname})" if uname else ""
+    print(f"\n[OK] Signed in to Telegram as: {name}{handle} (id={getattr(me, 'id', '?')})")
+    print("[OK] Saved session with 0600 permissions. The `telegram` MCP server is now ready!")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

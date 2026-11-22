@@ -38,6 +38,8 @@ var state = {
   voiceInterim: '',
   voiceServiceActive: false,
   voiceServiceMuted: false,
+  notifAccess: false,
+  commsGranted: false,
   activeVoiceSockets: [],
   activeMicTracks: [],
   toastTimer: 0,
@@ -175,6 +177,56 @@ function triggerRemotePortal() {
     }
   } catch (e) {
     try { console.warn('[agMobileBridge] openRemotePortal failed:', e); } catch (_) {}
+    return { ok: false, reason: 'bridge_error' };
+  }
+  return { ok: false, reason: 'bridge_unavailable' };
+}
+
+function isNotificationListenerEnabledState() {
+  var android = getAndroid();
+  try {
+    if (android && typeof android.isNotificationListenerEnabled === 'function') {
+      return !!android.isNotificationListenerEnabled();
+    }
+  } catch (_) {}
+  return !!state.notifAccess;
+}
+
+function triggerOpenNotificationListenerSettings() {
+  var android = getAndroid();
+  try {
+    if (android && typeof android.openNotificationListenerSettings === 'function') {
+      var opened = android.openNotificationListenerSettings(getNativeToken());
+      if (opened === false) return { ok: false, reason: 'native_rejected' };
+      return { ok: true };
+    }
+  } catch (e) {
+    try { console.warn('[agMobileBridge] openNotificationListenerSettings failed:', e); } catch (_) {}
+    return { ok: false, reason: 'bridge_error' };
+  }
+  return { ok: false, reason: 'bridge_unavailable' };
+}
+
+function hasCommsPermissionsState() {
+  var android = getAndroid();
+  try {
+    if (android && typeof android.hasCommsPermissions === 'function') {
+      return !!android.hasCommsPermissions();
+    }
+  } catch (_) {}
+  return !!state.commsGranted;
+}
+
+function triggerRequestCommsPermissions() {
+  var android = getAndroid();
+  try {
+    if (android && typeof android.requestCommsPermissions === 'function') {
+      var requested = android.requestCommsPermissions(getNativeToken());
+      if (requested === false) return { ok: false, reason: 'native_rejected' };
+      return { ok: true };
+    }
+  } catch (e) {
+    try { console.warn('[agMobileBridge] requestCommsPermissions failed:', e); } catch (_) {}
     return { ok: false, reason: 'bridge_error' };
   }
   return { ok: false, reason: 'bridge_unavailable' };
@@ -1766,6 +1818,29 @@ function syncDrawerState() {
   if (stopSvcBtn) {
     stopSvcBtn.style.display = voiceActive ? 'inline-block' : 'none';
   }
+  var notifEnabled = state.notifAccess;
+  var notifStatus = doc.getElementById('ag-mb-notif-status');
+  if (notifStatus) {
+    notifStatus.textContent = notifEnabled
+      ? 'Status: Enabled (Quick Reply active)'
+      : 'Status: Not Enabled';
+  }
+  var notifBtn = doc.getElementById('ag-mb-notif-settings');
+  if (notifBtn) {
+    notifBtn.textContent = notifEnabled ? 'Settings' : 'Enable';
+  }
+  var commsGranted = state.commsGranted;
+  var commsStatus = doc.getElementById('ag-mb-comms-status');
+  if (commsStatus) {
+    commsStatus.textContent = commsGranted
+      ? 'Status: Granted'
+      : 'Status: Not Granted';
+  }
+  var commsBtn = doc.getElementById('ag-mb-comms-request');
+  if (commsBtn) {
+    commsBtn.textContent = commsGranted ? 'Granted' : 'Grant';
+    commsBtn.className = commsGranted ? 'ag-mb-btn-secondary' : 'ag-mb-btn';
+  }
 }
 
 function createToggleRow(id, title, subtitle, onToggle) {
@@ -2013,6 +2088,66 @@ function buildAndroidToolsCard(onActionDone) {
   clipRow.appendChild(pasteImgBtn);
   card.appendChild(clipRow);
 
+  // Notification Access (Quick Reply)
+  var notifRow = doc.createElement('div');
+  notifRow.className = 'ag-mb-row';
+  var notifText = doc.createElement('div');
+  notifText.className = 'ag-mb-row-label';
+  var notifTitle = doc.createElement('span');
+  notifTitle.className = 'ag-mb-row-title';
+  notifTitle.textContent = 'Notification Access (Quick Reply)';
+  var notifSub = doc.createElement('span');
+  notifSub.id = 'ag-mb-notif-status';
+  notifSub.className = 'ag-mb-row-sub';
+  notifSub.textContent = 'Status: Not Enabled';
+  notifText.appendChild(notifTitle);
+  notifText.appendChild(notifSub);
+
+  var notifBtn = doc.createElement('button');
+  notifBtn.id = 'ag-mb-notif-settings';
+  notifBtn.type = 'button';
+  notifBtn.className = 'ag-mb-btn-secondary';
+  notifBtn.textContent = 'Enable';
+  notifBtn.addEventListener('click', function () {
+    var res = triggerOpenNotificationListenerSettings();
+    if (!res.ok) {
+      showBridgeToast('Notification settings bridge unavailable');
+    }
+  });
+  notifRow.appendChild(notifText);
+  notifRow.appendChild(notifBtn);
+  card.appendChild(notifRow);
+
+  // Phone & Contacts (Calls)
+  var commsRow = doc.createElement('div');
+  commsRow.className = 'ag-mb-row';
+  var commsText = doc.createElement('div');
+  commsText.className = 'ag-mb-row-label';
+  var commsTitle = doc.createElement('span');
+  commsTitle.className = 'ag-mb-row-title';
+  commsTitle.textContent = 'Phone & Contacts (Calls)';
+  var commsSub = doc.createElement('span');
+  commsSub.id = 'ag-mb-comms-status';
+  commsSub.className = 'ag-mb-row-sub';
+  commsSub.textContent = 'Status: Not Granted';
+  commsText.appendChild(commsTitle);
+  commsText.appendChild(commsSub);
+
+  var commsBtn = doc.createElement('button');
+  commsBtn.id = 'ag-mb-comms-request';
+  commsBtn.type = 'button';
+  commsBtn.className = 'ag-mb-btn';
+  commsBtn.textContent = 'Grant';
+  commsBtn.addEventListener('click', function () {
+    var res = triggerRequestCommsPermissions();
+    if (!res.ok) {
+      showBridgeToast('Phone & Contacts permission bridge unavailable');
+    }
+  });
+  commsRow.appendChild(commsText);
+  commsRow.appendChild(commsBtn);
+  card.appendChild(commsRow);
+
   // Buffered Share Sheet action (only visible when buffered)
   var shareWrap = doc.createElement('div');
   shareWrap.className = 'ag-mb-row-col';
@@ -2210,12 +2345,29 @@ function onExtraKeysVisibilityChanged(visible) {
   syncDrawerState();
 }
 
+function onCommsPermissionsChanged(payload) {
+  var info = payload;
+  if (typeof payload === 'string') {
+    try { info = JSON.parse(payload); } catch (_) { info = null; }
+  }
+  if (!info || typeof info !== 'object') return;
+  if (typeof info.notifAccess !== 'undefined') {
+    state.notifAccess = !!info.notifAccess;
+  }
+  if (typeof info.commsGranted !== 'undefined') {
+    state.commsGranted = !!info.commsGranted;
+  }
+  syncDrawerState();
+}
+
 function installMobileBridge() {
   if (state.installed) return;
   state.installed = true;
   state.voiceServiceActive = isVoiceServiceActiveNative();
   state.voiceServiceMuted = isVoiceMutedNative();
   state.dictating = isVoiceDictatingNative();
+  state.notifAccess = isNotificationListenerEnabledState();
+  state.commsGranted = hasCommsPermissionsState();
   installVoiceWebSocketHook();
   installMicTrackObserver();
   installClipboardImageInterceptor();
@@ -2241,6 +2393,7 @@ global.__agDeliverVoiceText = deliverVoiceText;
 global.__agVoiceDictationStateChanged = onVoiceDictationStateChanged;
 global.__agVoiceServiceStateChanged = onVoiceServiceStateChanged;
 global.__agDeliverPastedImage = deliverPastedImage;
+global.__agCommsPermissionsChanged = onCommsPermissionsChanged;
 
 global.__agMobileBridge = {
   __installed: true,
@@ -2251,6 +2404,7 @@ global.__agMobileBridge = {
   pasteImageFromClipboard: pasteImageFromNativeClipboard,
   onVoiceDictationStateChanged: onVoiceDictationStateChanged,
   onVoiceServiceStateChanged: onVoiceServiceStateChanged,
+  onCommsPermissionsChanged: onCommsPermissionsChanged,
   applyBufferedShare: applyBufferedShare,
   openDrawer: function () { setDrawerOpen(true); },
   closeDrawer: function () { setDrawerOpen(false); },
@@ -2262,6 +2416,10 @@ global.__agMobileBridge = {
   setExtraKeysVisible: setExtraKeysState,
   openLocalPreview: triggerLocalPreview,
   openRemotePortal: triggerRemotePortal,
+  isNotificationListenerEnabled: isNotificationListenerEnabledState,
+  openNotificationListenerSettings: triggerOpenNotificationListenerSettings,
+  hasCommsPermissions: hasCommsPermissionsState,
+  requestCommsPermissions: triggerRequestCommsPermissions,
   startVoiceDictation: startNativeVoiceDictation,
   stopVoiceDictation: stopNativeVoiceDictation,
   startVoiceService: startNativeVoiceService,
@@ -2281,6 +2439,8 @@ global.__agMobileBridge = {
       dictating: state.dictating,
       voiceServiceActive: state.voiceServiceActive || isVoiceServiceActiveNative(),
       voiceServiceMuted: state.voiceServiceMuted,
+      notifAccess: state.notifAccess,
+      commsGranted: state.commsGranted,
       activeVoiceSockets: state.activeVoiceSockets.length,
       desktopMode: getDesktopModeState(),
       extraKeysVisible: getExtraKeysState(),

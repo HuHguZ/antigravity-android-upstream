@@ -662,6 +662,184 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "android_inbox_list",
+        "description": (
+            "List active and recent incoming Android notifications captured by AgyNotificationListenerService "
+            "(Telegram, WhatsApp, SMS, email, etc.), including whether each supports inline Quick Reply."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "package": {
+                    "type": "string",
+                    "description": "Optional Android package filter (e.g. 'org.telegram.messenger', 'com.whatsapp').",
+                },
+                "replyable_only": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Return only notifications that expose a Quick Reply RemoteInput action.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 30,
+                    "description": "Maximum number of notifications to return.",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "android_inbox_reply",
+        "description": (
+            "Send an Android WearOS-style Quick Reply directly to an incoming notification "
+            "(Telegram, WhatsApp, SMS, etc.) using its key from android_inbox_list."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Notification key returned by android_inbox_list.",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Reply text to send.",
+                },
+            },
+            "required": ["key", "message"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "android_inbox_dismiss",
+        "description": "Dismiss/cancel an incoming Android notification by its key from android_inbox_list.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Notification key to dismiss.",
+                },
+            },
+            "required": ["key"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "android_call_status",
+        "description": (
+            "Check current Android phone call state ('idle', 'ringing', 'offhook'), speakerphone state, "
+            "incoming caller number/contact name, and granted telephony/contacts permissions."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "android_call_answer",
+        "description": "Answer an incoming ringing phone call (Android 8+ / API 26+, requires ANSWER_PHONE_CALLS).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "android_call_end",
+        "description": "End or reject the active or ringing phone call (Android 9+ / API 28+, requires ANSWER_PHONE_CALLS).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "android_call_speaker",
+        "description": "Turn Android call speakerphone on or off.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "True to enable speakerphone, false to disable.",
+                },
+            },
+            "required": ["enabled"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "android_call_history",
+        "description": "Read recent Android call log entries (requires READ_CALL_LOG permission).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 20,
+                    "description": "Maximum call log entries to return.",
+                },
+                "missed_only": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Return only missed calls when true.",
+                },
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "android_contacts_search",
+        "description": "Search Android contacts by name or phone number (requires READ_CONTACTS permission).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Name or phone number substring to search for.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 15,
+                    "description": "Maximum matching contacts to return.",
+                },
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "android_call_dial",
+        "description": (
+            "Open the Android dialer prefilled with a phone number (safe default), "
+            "or place a direct call when direct=true and CALL_PHONE permission is granted."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "string",
+                    "description": "Phone number to dial.",
+                },
+                "direct": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If true and CALL_PHONE is granted, place the call immediately instead of opening the dialer.",
+                },
+            },
+            "required": ["number"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -989,6 +1167,82 @@ def handle_schedule_task(args):
     return {"ok": False, "error": f"unsupported action: {action}"}
 
 
+def handle_inbox_list(args):
+    payload = {}
+    if args.get("package"):
+        payload["package"] = str(args["package"]).strip()
+    if "replyable_only" in args and args["replyable_only"] is not None:
+        payload["replyable_only"] = bool(args["replyable_only"])
+    if "limit" in args and args["limit"] is not None:
+        payload["limit"] = max(1, min(int(args["limit"]), 100))
+    return gateway_post("inbox_list", payload)
+
+
+def handle_inbox_reply(args):
+    key = str(args.get("key") or "").strip()
+    message = args.get("message")
+    if not key:
+        return {"ok": False, "error": "key is required"}
+    if message is None or str(message) == "":
+        return {"ok": False, "error": "message is required"}
+    return gateway_post("inbox_reply", {"key": key, "message": str(message)})
+
+
+def handle_inbox_dismiss(args):
+    key = str(args.get("key") or "").strip()
+    if not key:
+        return {"ok": False, "error": "key is required"}
+    return gateway_post("inbox_dismiss", {"key": key})
+
+
+def handle_call_status(_args):
+    resp = gateway_post("call_status", {})
+    if not resp.get("ok") and "unknown command" in str(resp.get("error", "")).lower():
+        return gateway_get("/gateway/call/status")
+    return resp
+
+
+def handle_call_answer(_args):
+    return gateway_post("call_answer", {})
+
+
+def handle_call_end(_args):
+    return gateway_post("call_end", {})
+
+
+def handle_call_speaker(args):
+    if "enabled" not in args:
+        return {"ok": False, "error": "enabled boolean is required"}
+    return gateway_post("call_speaker", {"enabled": bool(args["enabled"])})
+
+
+def handle_call_history(args):
+    payload = {}
+    if "limit" in args and args["limit"] is not None:
+        payload["limit"] = max(1, min(int(args["limit"]), 100))
+    if "missed_only" in args and args["missed_only"] is not None:
+        payload["missed_only"] = bool(args["missed_only"])
+    return gateway_post("call_history", payload)
+
+
+def handle_contacts_search(args):
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"ok": False, "error": "query is required"}
+    payload = {"query": query}
+    if "limit" in args and args["limit"] is not None:
+        payload["limit"] = max(1, min(int(args["limit"]), 50))
+    return gateway_post("contacts_search", payload)
+
+
+def handle_call_dial(args):
+    number = str(args.get("number") or "").strip()
+    if not number:
+        return {"ok": False, "error": "number is required"}
+    payload = {"number": number, "direct": bool(args.get("direct", False))}
+    return gateway_post("call_dial", payload)
+
+
 TOOL_HANDLERS = {
     "android_device_info": handle_device_info,
     "android_notify": handle_notify,
@@ -1003,6 +1257,16 @@ TOOL_HANDLERS = {
     "android_shizuku_exec": handle_shizuku_exec,
     "android_browser_automate": handle_browser_automate,
     "android_schedule_task": handle_schedule_task,
+    "android_inbox_list": handle_inbox_list,
+    "android_inbox_reply": handle_inbox_reply,
+    "android_inbox_dismiss": handle_inbox_dismiss,
+    "android_call_status": handle_call_status,
+    "android_call_answer": handle_call_answer,
+    "android_call_end": handle_call_end,
+    "android_call_speaker": handle_call_speaker,
+    "android_call_history": handle_call_history,
+    "android_contacts_search": handle_contacts_search,
+    "android_call_dial": handle_call_dial,
 }
 
 

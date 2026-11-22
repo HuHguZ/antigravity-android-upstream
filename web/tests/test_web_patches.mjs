@@ -320,13 +320,17 @@ function createMockDom() {
     voiceMute: [],
     dictateStart: [],
     dictateStop: [],
-    clipboardReads: []
+    clipboardReads: [],
+    notifSettings: [],
+    commsRequests: []
   };
   let desktopState = false;
   let extraKeysState = false;
   let voiceSvcActive = false;
   let voiceMuted = false;
   let voiceDictating = false;
+  let notifAccessState = false;
+  let commsGrantedState = false;
   let mockClipboardImg = null;
 
   // Lightweight mock WebSocket so we can verify /voice/ws auto-service hook
@@ -378,7 +382,11 @@ function createMockDom() {
     readClipboardImage: (tok) => {
       calls.clipboardReads.push(tok);
       return JSON.stringify(mockClipboardImg || { ok: false, error: 'no_image' });
-    }
+    },
+    isNotificationListenerEnabled: () => notifAccessState,
+    openNotificationListenerSettings: (tok) => { calls.notifSettings.push(tok); return true; },
+    hasCommsPermissions: () => commsGrantedState,
+    requestCommsPermissions: (tok) => { calls.commsRequests.push(tok); return true; }
   };
 
   const code = fs.readFileSync(path.join(GEN_DIR, 'patches', 'mobile_bridge.js'), 'utf8');
@@ -595,6 +603,28 @@ function createMockDom() {
   pasteImgBtn.dispatchEvent(new windowObj.Event('click', { bubbles: true, cancelable: true }));
   assert.equal(calls.clipboardReads.length, 2);
   assert.equal(pastedFiles.length, 3);
+
+  // 1k. Notification Access (Quick Reply) & Phone & Contacts (Calls) rows in Settings + live callback
+  assert.equal(typeof windowObj.__agCommsPermissionsChanged, 'function');
+  const notifStatusEl = document.getElementById('ag-mb-notif-status');
+  const notifBtnEl = document.getElementById('ag-mb-notif-settings');
+  const commsStatusEl = document.getElementById('ag-mb-comms-status');
+  const commsBtnEl = document.getElementById('ag-mb-comms-request');
+  assert.ok(notifStatusEl && notifBtnEl && commsStatusEl && commsBtnEl, 'Comms permission rows must render in Settings');
+  assert.ok(notifStatusEl.textContent.includes('Not Enabled'));
+  assert.ok(commsStatusEl.textContent.includes('Not Granted'));
+
+  notifBtnEl.dispatchEvent(new windowObj.Event('click', { bubbles: true, cancelable: true }));
+  commsBtnEl.dispatchEvent(new windowObj.Event('click', { bubbles: true, cancelable: true }));
+  assert.deepEqual(calls.notifSettings, ['tok-secret-123']);
+  assert.deepEqual(calls.commsRequests, ['tok-secret-123']);
+
+  notifAccessState = true;
+  commsGrantedState = true;
+  windowObj.__agCommsPermissionsChanged({ notifAccess: true, commsGranted: true });
+  assert.ok(notifStatusEl.textContent.includes('Enabled'));
+  assert.ok(commsStatusEl.textContent.includes('Granted'));
+  assert.equal(commsBtnEl.textContent, 'Granted');
 
   // 1j. Confirm programmatic drawer fallback also works cleanly when Settings is not mounted
   settingsScreen.parentNode.removeChild(settingsScreen);

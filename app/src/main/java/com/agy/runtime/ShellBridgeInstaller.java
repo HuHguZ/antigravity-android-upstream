@@ -35,7 +35,7 @@ public final class ShellBridgeInstaller {
     /** Records which prefix the bulk bridges were generated for. Bump when the
      *  bridge script format changes so a warm launch regenerates them once. */
     private static final String BRIDGE_MARKER = ".agy-bridges";
-    private static final int BRIDGE_FORMAT = 4;
+    private static final int BRIDGE_FORMAT = 5;
 
     private ShellBridgeInstaller() {
     }
@@ -185,6 +185,8 @@ public final class ShellBridgeInstaller {
                             || "node".equals(name)
                             || "agy-mcp-android".equals(name)
                             || "agy-mcp-browser".equals(name)
+                            || "agy-mcp-telegram".equals(name)
+                            || "agy-tg-setup".equals(name)
                             || "python3".equals(name)
                             || "python".equals(name)
                             || isOpenUrlShim(name)) {
@@ -448,6 +450,8 @@ public final class ShellBridgeInstaller {
     private static void writeMcpAndPythonBridges(File bin, File prefix, File filesDir, String appId) {
         writeExecBridge(new File(bin, "agy-mcp-android"), prefix, filesDir, "agy-mcp-android", null, appId);
         writeExecBridge(new File(bin, "agy-mcp-browser"), prefix, filesDir, "agy-mcp-browser", null, appId);
+        writeExecBridge(new File(bin, "agy-mcp-telegram"), prefix, filesDir, "agy-mcp-telegram", null, appId);
+        writeExecBridge(new File(bin, "agy-tg-setup"), prefix, filesDir, "agy-tg-setup", null, appId);
         writeExecBridge(new File(bin, "python3"), prefix, filesDir, "python3", null, appId);
         writeExecBridge(new File(bin, "python"), prefix, filesDir, "python", "python3", appId);
     }

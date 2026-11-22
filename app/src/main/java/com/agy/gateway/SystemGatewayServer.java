@@ -173,6 +173,10 @@ public final class SystemGatewayServer {
                 responseJson = ApprovalActionReceiver.poll(context, id, waitMs);
             } else if ("GET".equals(method) && path.startsWith("/gateway/voice/status")) {
                 responseJson = VoiceForegroundService.getStatusJson();
+            } else if ("GET".equals(method) && path.startsWith("/gateway/inbox/status")) {
+                responseJson = dispatcher.dispatch("inbox_status", null);
+            } else if ("GET".equals(method) && path.startsWith("/gateway/call/status")) {
+                responseJson = dispatcher.dispatch("call_status", null);
             } else if ("POST".equals(method) && path.startsWith("/gateway")) {
                 String bodyStr = "";
                 if (contentLength > 0) {

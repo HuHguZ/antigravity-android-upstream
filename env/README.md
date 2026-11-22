@@ -27,8 +27,10 @@ env/
 │   ├── bin/                # Системные скрипты и утилиты AGY
 │   │   ├── agy-daemon      # Фоновый автономный диспетчер задач и планировщик (ConnectRPC + shell)
 │   │   ├── agy-fix-paths   # Утилита динамической нормализации шебангов и путей
-│   │   ├── agy-mcp-android # Нативный stdio MCP-сервер (SystemGateway, браузер, Shizuku, daemon)
+│   │   ├── agy-mcp-android # Нативный stdio MCP-сервер (SystemGateway, браузер, Shizuku, inbox, звонки, daemon)
 │   │   ├── agy-mcp-browser # Chrome DevTools-совместимый stdio MCP-сервер поверх Android WebView
+│   │   ├── agy-mcp-telegram # Telegram MTProto stdio MCP-сервер (Telethon, lazy import)
+│   │   ├── agy-tg-setup    # Интерактивный мастер настройки Telegram API и сессии (0600)
 │   │   ├── agy-notify      # Утилита управления системными уведомлениями Android
 │   │   ├── agy-upgrade     # Менеджер безопасного обновления, бэкапа и миграций
 │   │   ├── rish            # Клиент Shizuku для привилегированного шелла (uid=2000)

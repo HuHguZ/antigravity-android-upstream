@@ -29,6 +29,7 @@ public final class OnboardingSeeder {
     private static final String TAG = "OnboardingSeeder";
     private static final String ANDROID_MCP_SERVER_KEY = "android-device";
     private static final String CHROME_DEVTOOLS_MCP_SERVER_KEY = "chrome_devtools";
+    private static final String TELEGRAM_MCP_SERVER_KEY = "telegram";
 
     private OnboardingSeeder() {
     }
@@ -78,6 +79,7 @@ public final class OnboardingSeeder {
         File runtimeBin = new File(filesDir, RuntimePaths.BIN_DIR);
         File androidMcpBridge = new File(runtimeBin, "agy-mcp-android");
         File browserMcpBridge = new File(runtimeBin, "agy-mcp-browser");
+        File telegramMcpBridge = new File(runtimeBin, "agy-mcp-telegram");
 
         List<File> targets = new ArrayList<>();
         // v2.34.0 global MCP config path: ~/.gemini/config/mcp_config.json
@@ -101,6 +103,7 @@ public final class OnboardingSeeder {
                         target,
                         androidMcpBridge.getAbsolutePath(),
                         browserMcpBridge.getAbsolutePath(),
+                        telegramMcpBridge.getAbsolutePath(),
                         homePath,
                         prefixPath,
                         runtimeBinPath);
@@ -113,6 +116,7 @@ public final class OnboardingSeeder {
     private static void mergeBundledMcpServers(File target,
                                                String androidMcpCmd,
                                                String browserMcpCmd,
+                                               String telegramMcpCmd,
                                                String homePath,
                                                String prefixPath,
                                                String runtimeBinPath) throws Exception {
@@ -162,6 +166,14 @@ public final class OnboardingSeeder {
                 CHROME_DEVTOOLS_MCP_SERVER_KEY,
                 browserMcpCmd,
                 "/usr/bin/agy-mcp-browser",
+                homePath,
+                prefixPath,
+                runtimeBinPath);
+        changed |= ensureMcpServerEntry(
+                mcpServers,
+                TELEGRAM_MCP_SERVER_KEY,
+                telegramMcpCmd,
+                "/usr/bin/agy-mcp-telegram",
                 homePath,
                 prefixPath,
                 runtimeBinPath);
